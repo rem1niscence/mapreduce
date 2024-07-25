@@ -27,8 +27,11 @@ type ExampleReply struct {
 type EmptyArgs struct{}
 
 type JobArgs struct {
-	JobType   string
-	Filenames []string
+	JobType    string
+	Filenames  []string
+	NReduce    int
+	ReducePath string
+	TaskNumber int
 }
 
 // Add your RPC definitions here.

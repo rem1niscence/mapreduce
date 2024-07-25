@@ -15,6 +15,7 @@ type job struct {
 	jobType string
 	files   []string
 	start   time.Time
+	taskNum int
 }
 
 type Coordinator struct {
@@ -23,7 +24,11 @@ type Coordinator struct {
 
 	activeReduces  []job
 	pendingReduces []string
-	mu             sync.Mutex
+
+	reducePath string
+	mu         sync.Mutex
+	taskNum    int
+	nReduce    int
 }
 
 func (c *Coordinator) Run() {
@@ -48,12 +53,18 @@ func (c *Coordinator) MapJob(reply *JobArgs) error {
 
 	reply.JobType = "map"
 	reply.Filenames = []string{file}
+	reply.ReducePath = c.reducePath
+	reply.NReduce = c.nReduce
+	reply.TaskNumber = c.taskNum
 
 	c.activeMaps = append(c.activeMaps, job{
 		jobType: "map",
 		files:   []string{file},
 		start:   time.Now(),
+		taskNum: c.taskNum,
 	})
+	c.taskNum++
+
 	c.mu.Unlock()
 	return nil
 }
@@ -85,10 +96,13 @@ func (c *Coordinator) Done() bool {
 // create a Coordinator.
 // main/mrcoordinator.go calls this function.
 // nReduce is the number of reduce tasks to use.
-func NewCoordinator(files []string, nReduce int) *Coordinator {
+func NewCoordinator(reduceFolder string, files []string, nReduce int) *Coordinator {
+
 	c := Coordinator{
 		mu:          sync.Mutex{},
 		pendingMaps: files,
+		reducePath:  reduceFolder,
+		nReduce:     nReduce,
 	}
 
 	// Your code here.
