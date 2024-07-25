@@ -11,18 +11,18 @@ import (
 	"time"
 )
 
-type job struct {
-	jobType string
-	files   []string
-	start   time.Time
-	taskNum int
+type task struct {
+	taskType string
+	files    []string
+	start    time.Time
+	taskNum  int
 }
 
 type Coordinator struct {
-	activeMaps  []job
+	activeMaps  []task
 	pendingMaps []string
 
-	activeReduces  []job
+	activeReduces  []task
 	pendingReduces []string
 
 	reducePath string
@@ -35,33 +35,33 @@ func (c *Coordinator) Run() {
 
 }
 
-func (c *Coordinator) RunJob(args EmptyArgs, reply *JobArgs) error {
+func (c *Coordinator) RequestTask(args EmptyArgs, reply *TaskArgs) error {
 	if len(c.pendingMaps) > 0 {
-		return c.MapJob(reply)
+		return c.NewMapTask(reply)
 	}
 	// else if len(c.pendingReduces) > 0 {
 
 	// }
-	fmt.Println("No jobs available")
+	fmt.Println("No tasks available")
 	return nil
 }
 
-func (c *Coordinator) MapJob(reply *JobArgs) error {
+func (c *Coordinator) NewMapTask(reply *TaskArgs) error {
 	c.mu.Lock()
 	file := c.pendingMaps[len(c.pendingMaps)-1]
 	c.pendingMaps = c.pendingMaps[:len(c.pendingMaps)-1]
 
-	reply.JobType = "map"
+	reply.TaskType = "map"
 	reply.Filenames = []string{file}
 	reply.ReducePath = c.reducePath
 	reply.NReduce = c.nReduce
 	reply.TaskNumber = c.taskNum
 
-	c.activeMaps = append(c.activeMaps, job{
-		jobType: "map",
-		files:   []string{file},
-		start:   time.Now(),
-		taskNum: c.taskNum,
+	c.activeMaps = append(c.activeMaps, task{
+		taskType: "map",
+		files:    []string{file},
+		start:    time.Now(),
+		taskNum:  c.taskNum,
 	})
 	c.taskNum++
 
@@ -84,7 +84,7 @@ func (c *Coordinator) server() {
 }
 
 // main/mrcoordinator.go calls Done() periodically to find out
-// if the entire job has finished.
+// if the entire task has finished.
 func (c *Coordinator) Done() bool {
 	ret := false
 

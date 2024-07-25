@@ -26,8 +26,8 @@ type ExampleReply struct {
 
 type EmptyArgs struct{}
 
-type JobArgs struct {
-	JobType    string
+type TaskArgs struct {
+	TaskType   string
 	Filenames  []string
 	NReduce    int
 	ReducePath string

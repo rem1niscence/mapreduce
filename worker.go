@@ -51,28 +51,28 @@ func NewWorker(mapf MapFunc, reducef ReduceFunc) (*Worker, error) {
 	return &w, nil
 }
 
-func (w *Worker) PerformJob() {
-	// Get job from server
-	job := JobArgs{}
-	err := w.rpcClient.Call("Coordinator.RunJob", EmptyArgs{}, &job)
+func (w *Worker) PerformTask() {
+	// Get task from the server
+	task := TaskArgs{}
+	err := w.rpcClient.Call("Coordinator.RequestTask", EmptyArgs{}, &task)
 	if err != nil {
-		log.Println("error getting job from coordinator", err)
+		log.Println("error getting task from coordinator", err)
 	}
 
-	switch job.JobType {
+	switch task.TaskType {
 	case "map":
-		fmt.Printf("new job: %s #%d\n", job.Filenames[0], job.TaskNumber)
-		_, err := w.Map(job)
+		fmt.Printf("new task: %s #%d\n", task.Filenames[0], task.TaskNumber)
+		_, err := w.Map(task)
 		if err != nil {
-			log.Println("map job failed:", err)
+			log.Println("map task failed:", err)
 		}
 	}
 }
 
 // Map runs the plugin's Map function on the given file and content
 // and sorts the output by key to be placed in separate buckets based on NReduce.
-func (w *Worker) Map(job JobArgs) ([]string, error) {
-	file, err := os.Open(job.Filenames[0])
+func (w *Worker) Map(task TaskArgs) ([]string, error) {
+	file, err := os.Open(task.Filenames[0])
 	if err != nil {
 		return nil, err
 	}
@@ -82,9 +82,9 @@ func (w *Worker) Map(job JobArgs) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	keyValues := w.Mapper(job.Filenames[0], string(content))
+	keyValues := w.Mapper(task.Filenames[0], string(content))
 
-	return CreateReduceTasks(keyValues, job.TaskNumber, job.ReducePath, job.NReduce)
+	return CreateReduceTasks(keyValues, task.TaskNumber, task.ReducePath, task.NReduce)
 }
 
 // CreateReduceTasks writes the intermediate key-values to the reduce tasks files, sorted by key.

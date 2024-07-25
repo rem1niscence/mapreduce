@@ -69,7 +69,7 @@ func RequestJob(worker *mr.Worker, stopCh chan struct{}) {
 	for range ticker.C {
 
 		// Ping server
-		worker.PerformJob()
+		worker.PerformTask()
 	}
 
 	stopCh <- struct{}{}
