@@ -24,6 +24,13 @@ type ExampleReply struct {
 	Y int
 }
 
+type EmptyArgs struct{}
+
+type JobArgs struct {
+	JobType   string
+	Filenames []string
+}
+
 // Add your RPC definitions here.
 
 // Cook up a unique-ish UNIX-domain socket name
