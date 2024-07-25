@@ -2,10 +2,12 @@ package mr
 
 import (
 	"fmt"
-	"hash/fnv"
 	"log"
 	"net/rpc"
 )
+
+type MapFunc func(string, string) []KeyValue
+type ReduceFunc func(string, []string) string
 
 // Map functions return a slice of KeyValue.
 type KeyValue struct {
@@ -13,69 +15,50 @@ type KeyValue struct {
 	Value string
 }
 
+type Worker struct {
+	Mapper    MapFunc
+	Reducer   ReduceFunc
+	rpcClient *rpc.Client
+}
+
 // use ihash(key) % NReduce to choose the reduce
 // task number for each KeyValue emitted by Map.
-func ihash(key string) int {
-	h := fnv.New32a()
-	h.Write([]byte(key))
-	return int(h.Sum32() & 0x7fffffff)
+// func ihash(key string) int {
+// 	h := fnv.New32a()
+// 	h.Write([]byte(key))
+// 	return int(h.Sum32() & 0x7fffffff)
+// }
+
+func (w *Worker) PerformJob() {
+	// Get job from server
+	reply := JobArgs{}
+	err := w.rpcClient.Call("Coordinator.RunJob", EmptyArgs{}, &reply)
+	if err != nil {
+		log.Println("error getting job from coordinator", err)
+	}
+
+	fmt.Printf("job name: %s file name: %s\n", reply.JobType, reply.Filenames)
 }
 
 // main/mrworker.go calls this function.
-func Worker(mapf func(string, string) []KeyValue,
-	reducef func(string, []string) string) {
-
-	// Your worker implementation here.
-
-	// uncomment to send the Example RPC to the coordinator.
-	CallExample()
-
-}
-
-// example function to show how to make an RPC call to the coordinator.
-//
-// the RPC argument and reply types are defined in rpc.go.
-func CallExample() {
-
-	// declare an argument structure.
-	args := ExampleArgs{}
-
-	// fill in the argument(s).
-	args.X = 99
-
-	// declare a reply structure.
-	reply := ExampleReply{}
-
-	// send the RPC request, wait for the reply.
-	// the "Coordinator.Example" tells the
-	// receiving server that we'd like to call
-	// the Example() method of struct Coordinator.
-	ok := call("Coordinator.Example", &args, &reply)
-	if ok {
-		// reply.Y should be 100.
-		fmt.Printf("reply.Y %v\n", reply.Y)
-	} else {
-		fmt.Printf("call failed!\n")
-	}
-}
-
-// send an RPC request to the coordinator, wait for the response.
-// usually returns true.
-// returns false if something goes wrong.
-func call(rpcname string, args interface{}, reply interface{}) bool {
-	// c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
-	sockname := coordinatorSock()
-	c, err := rpc.DialHTTP("unix", sockname)
+func NewWorker(mapf MapFunc, reducef ReduceFunc) (*Worker, error) {
+	sockName := coordinatorSock()
+	client, err := rpc.DialHTTP("unix", sockName)
 	if err != nil {
-		log.Fatal("dialing:", err)
-	}
-	defer c.Close()
-
-	err = c.Call(rpcname, args, reply)
-	if err == nil {
-		return true
+		return nil, err
 	}
 
-	fmt.Println(err)
-	return false
+	w := Worker{
+		Mapper:    mapf,
+		Reducer:   reducef,
+		rpcClient: client,
+	}
+
+	return &w, nil
+}
+
+// Stop closes the rpc connection
+// TODO: Signal application to stop
+func (w *Worker) Stop() error {
+	return w.rpcClient.Close()
 }

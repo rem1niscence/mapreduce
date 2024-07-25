@@ -1,25 +1,60 @@
 package mr
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"net/rpc"
 	"os"
+	"sync"
+	"time"
 )
 
+type job struct {
+	jobType string
+	files   []string
+	start   time.Time
+}
+
 type Coordinator struct {
-	// Your definitions here.
+	activeMaps  []job
+	pendingMaps []string
+
+	activeReduces  []job
+	pendingReduces []string
+	mu             sync.Mutex
+}
+
+func (c *Coordinator) Run() {
 
 }
 
-// Your code here -- RPC handlers for the worker to call.
+func (c *Coordinator) RunJob(args EmptyArgs, reply *JobArgs) error {
+	if len(c.pendingMaps) > 0 {
+		return c.MapJob(reply)
+	}
+	// else if len(c.pendingReduces) > 0 {
 
-// an example RPC handler.
-//
-// the RPC argument and reply types are defined in rpc.go.
-func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
-	reply.Y = args.X + 1
+	// }
+	fmt.Println("No jobs available")
+	return nil
+}
+
+func (c *Coordinator) MapJob(reply *JobArgs) error {
+	c.mu.Lock()
+	file := c.pendingMaps[len(c.pendingMaps)-1]
+	c.pendingMaps = c.pendingMaps[:len(c.pendingMaps)-1]
+
+	reply.JobType = "map"
+	reply.Filenames = []string{file}
+
+	c.activeMaps = append(c.activeMaps, job{
+		jobType: "map",
+		files:   []string{file},
+		start:   time.Now(),
+	})
+	c.mu.Unlock()
 	return nil
 }
 
@@ -50,8 +85,11 @@ func (c *Coordinator) Done() bool {
 // create a Coordinator.
 // main/mrcoordinator.go calls this function.
 // nReduce is the number of reduce tasks to use.
-func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	c := Coordinator{}
+func NewCoordinator(files []string, nReduce int) *Coordinator {
+	c := Coordinator{
+		mu:          sync.Mutex{},
+		pendingMaps: files,
+	}
 
 	// Your code here.
 
