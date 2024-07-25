@@ -11,6 +11,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"time"
 
@@ -23,7 +24,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	m := mr.NewCoordinator(os.Args[1:], 10)
+	reduceFolder, err := os.MkdirTemp("../testdata/tmp", "mr")
+	if err != nil {
+		log.Fatal("create temp folder failed:", err)
+	}
+	defer os.RemoveAll(reduceFolder)
+
+	m := mr.NewCoordinator(reduceFolder, os.Args[1:], 10)
 	for !m.Done() {
 		time.Sleep(time.Second)
 	}
