@@ -15,6 +15,7 @@ import (
 	"log"
 	"os"
 	"plugin"
+	"time"
 
 	mr "github.com/rem1niscence/mapReduce"
 )
@@ -25,9 +26,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	mapf, reducef := loadPlugin(os.Args[1])
+	mapFunc, reduceFunc := loadPlugin(os.Args[1])
 
-	mr.Worker(mapf, reducef)
+	worker, err := mr.NewWorker(mapFunc, reduceFunc)
+	if err != nil {
+		log.Fatalf("cannot create worker: %v", err)
+	}
+
+	stop := make(chan struct{})
+
+	go RequestJob(worker, stop)
+
+	<-stop
 }
 
 // load the application Map and Reduce functions
@@ -49,4 +59,18 @@ func loadPlugin(filename string) (func(string, string) []mr.KeyValue, func(strin
 	reduceFunc := reduceSymbol.(func(string, []string) string)
 
 	return mapFunc, reduceFunc
+}
+
+// RequestJob periodically pings the coordinator for new jobs to perform
+func RequestJob(worker *mr.Worker, stopCh chan struct{}) {
+	ticker := time.NewTicker(2 * time.Second)
+
+	fmt.Println("Requesting job from coordinator")
+	for range ticker.C {
+
+		// Ping server
+		worker.PerformJob()
+	}
+
+	stopCh <- struct{}{}
 }
