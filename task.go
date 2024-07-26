@@ -2,6 +2,7 @@ package mr
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 )
@@ -28,7 +29,11 @@ type Tasks struct {
 
 func (t *Tasks) Add(files []string) {
 	t.mu.Lock()
-	t.pending = append(t.pending, files...)
+	for _, file := range files {
+		if slices.Index(t.pending, file) == -1 {
+			t.pending = append(t.pending, file)
+		}
+	}
 	t.mu.Unlock()
 }
 

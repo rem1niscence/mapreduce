@@ -1,6 +1,7 @@
 package mr
 
 import (
+	"bytes"
 	"encoding/gob"
 	"fmt"
 	"hash/fnv"
@@ -168,18 +169,17 @@ func (w *Worker) Stop() error {
 
 // CreateReduceTasks writes the intermediate key-values to the reduce tasks files, sorted by key.
 func CreateReduceTasks(values []KeyValue, taskNumber int, path string, nReduce int) ([]string, error) {
-	// Sort by key so all values for a key are grouped in the same bucket
-	sort.Sort(ByKey(values))
-
 	// Create nReduce files
 	files := make([]*os.File, nReduce)
 	filenames := make([]string, nReduce)
 	for i := 0; i < nReduce; i++ {
-		oname := fmt.Sprintf("mp-out-%d-%d", taskNumber, i)
-		ofile, err := os.Create(filepath.Join(path, oname))
+		oname := fmt.Sprintf("mp-bucket-%d", i)
+
+		ofile, err := os.OpenFile(filepath.Join(path, oname), os.O_RDWR|os.O_CREATE, 0666)
 		if err != nil {
-			return nil, fmt.Errorf("cannot create file %s: %v", oname, err)
+			return nil, fmt.Errorf("cannot open file %s: %v", oname, err)
 		}
+
 		files[i] = ofile
 		filenames[i] = oname
 
@@ -195,7 +195,39 @@ func CreateReduceTasks(values []KeyValue, taskNumber int, path string, nReduce i
 
 	// Write to files
 	for i, bucket := range buckets {
-		err := gob.NewEncoder(files[i]).Encode(bucket)
+		i := i
+		content, err := io.ReadAll(files[i])
+		if err != nil {
+			return nil, fmt.Errorf("cannot read file %s: %v", filenames[i], err)
+		}
+
+		// Override file content if it exists
+		if len(content) > 0 {
+			fileKeyValues := make([]KeyValue, 0)
+
+			if err := gob.NewDecoder(bytes.NewReader(content)).Decode(&fileKeyValues); err != nil {
+				return nil, fmt.Errorf("cannot decode file %s: %v", filenames[i], err)
+			}
+
+			// Truncate the file to zero length to overwrite its content
+			err = files[i].Truncate(0)
+			if err != nil {
+				return nil, fmt.Errorf("cannot truncate file %s: %v", filenames[i], err)
+			}
+
+			// Move the file pointer to the beginning of the file
+			_, err = files[i].Seek(0, 0)
+			if err != nil {
+				return nil, fmt.Errorf("cannot seek to beginning of file %s: %v", filenames[i], err)
+			}
+
+			bucket = append(bucket, fileKeyValues...)
+		}
+
+		// Sort by key so all values for a key are grouped in the same bucket
+		sort.Sort(ByKey(bucket))
+
+		err = gob.NewEncoder(files[i]).Encode(bucket)
 		if err != nil {
 			return nil, fmt.Errorf("cannot encode bucket %d: %v", i, err)
 		}
