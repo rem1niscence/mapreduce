@@ -2,7 +2,7 @@ package mr
 
 import (
 	"bytes"
-	"encoding/gob"
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"io"
@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+
+	"golang.org/x/sys/unix"
 )
 
 type MapFunc func(string, string) []KeyValue
@@ -41,7 +43,6 @@ func NewWorker(mapf MapFunc, reducef ReduceFunc) (*Worker, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	w := Worker{
 		Mapper:    mapf,
 		Reducer:   reducef,
@@ -52,7 +53,7 @@ func NewWorker(mapf MapFunc, reducef ReduceFunc) (*Worker, error) {
 }
 
 func (w *Worker) PerformTask(task TaskArgs) error {
-	fmt.Printf("new task: [%v] %v #%d\n", task.TaskType, task.Filenames, task.Number)
+	// fmt.Printf("new task: [%v] %v #%d\n", task.TaskType, task.Filenames, task.Number)
 
 	switch task.TaskType {
 	case MapTask:
@@ -64,19 +65,23 @@ func (w *Worker) PerformTask(task TaskArgs) error {
 		if err != nil {
 			return err
 		}
-		w.rpcClient.Call("Coordinator.CompleteTask", &TaskArgs{
+		err = w.rpcClient.Call("Coordinator.CompleteTask", &TaskArgs{
 			TaskType:  task.TaskType,
 			Number:    task.Number,
 			Filenames: reduceFiles,
 		}, &EmptyArgs{})
-	case ReduceTask:
-		keyValues, err := w.Reduce(task)
 		if err != nil {
 			return err
 		}
+
+	case ReduceTask:
+		keyValues, err := w.Reduce(task)
+		if err != nil {
+			return fmt.Errorf("reducer: function: %v", err)
+		}
 		ofile, err := os.Create(fmt.Sprintf("mr-out-%d", task.Number))
 		if err != nil {
-			return err
+			return fmt.Errorf("reducer: create file: %v", err)
 		}
 		defer ofile.Close()
 
@@ -84,13 +89,16 @@ func (w *Worker) PerformTask(task TaskArgs) error {
 			fmt.Fprintf(ofile, "%v %v\n", kv.Key, kv.Value)
 		}
 
-		w.rpcClient.Call("Coordinator.CompleteTask", &TaskArgs{
+		err = w.rpcClient.Call("Coordinator.CompleteTask", &TaskArgs{
 			TaskType:  task.TaskType,
 			Number:    task.Number,
 			Filenames: task.Filenames,
 		}, &EmptyArgs{})
+		if err != nil {
+			return fmt.Errorf("reducer: signal complete task: %v", err)
+		}
 	default:
-		return fmt.Errorf("unknown task type: %s", task.TaskType)
+		return fmt.Errorf("reducer: unknown task type: %s", task.TaskType)
 	}
 
 	return nil
@@ -126,16 +134,17 @@ func (w *Worker) Map(task TaskArgs) ([]KeyValue, error) {
 func (w *Worker) Reduce(task TaskArgs) ([]KeyValue, error) {
 	reducedValues := make([]KeyValue, 0)
 
-	file, err := os.Open(filepath.Join(task.ReducePath, task.Filenames[0]))
+	path := filepath.Join(task.ReducePath, task.Filenames[0])
+	file, err := os.Open(path)
 	if err != nil {
-		return reducedValues, err
+		return reducedValues, fmt.Errorf("open file %s: %v", path, err)
 	}
 	defer file.Close()
 
 	intermediateValues := make([]KeyValue, 0)
-	err = gob.NewDecoder(file).Decode(&intermediateValues)
+	err = json.NewDecoder(file).Decode(&intermediateValues)
 	if err != nil {
-		return reducedValues, err
+		return reducedValues, fmt.Errorf("decode file %s: %v", path, err)
 	}
 
 	// call Reduce on each distinct key in keyValues[],
@@ -177,13 +186,20 @@ func CreateReduceTasks(values []KeyValue, taskNumber int, path string, nReduce i
 
 		ofile, err := os.OpenFile(filepath.Join(path, oname), os.O_RDWR|os.O_CREATE, 0666)
 		if err != nil {
-			return nil, fmt.Errorf("cannot open file %s: %v", oname, err)
+			return nil, fmt.Errorf("open file %s: %v", oname, err)
 		}
+		defer ofile.Close()
+
+		// Apply an exclusive lock to the file
+		err = unix.Flock(int(ofile.Fd()), unix.LOCK_EX)
+		if err != nil {
+			return nil, fmt.Errorf("lock file %s: %v", oname, err)
+		}
+		// Unlock the file when done
+		defer unix.Flock(int(ofile.Fd()), unix.LOCK_UN)
 
 		files[i] = ofile
 		filenames[i] = oname
-
-		defer ofile.Close()
 	}
 
 	// Separate file into buckets
@@ -198,27 +214,27 @@ func CreateReduceTasks(values []KeyValue, taskNumber int, path string, nReduce i
 		i := i
 		content, err := io.ReadAll(files[i])
 		if err != nil {
-			return nil, fmt.Errorf("cannot read file %s: %v", filenames[i], err)
+			return nil, fmt.Errorf("read file %s: %v", filenames[i], err)
 		}
 
 		// Override file content if it exists
 		if len(content) > 0 {
 			fileKeyValues := make([]KeyValue, 0)
 
-			if err := gob.NewDecoder(bytes.NewReader(content)).Decode(&fileKeyValues); err != nil {
-				return nil, fmt.Errorf("cannot decode file %s: %v", filenames[i], err)
+			if err := json.NewDecoder(bytes.NewReader(content)).Decode(&fileKeyValues); err != nil {
+				return nil, fmt.Errorf("decode file %s: %v", filenames[i], err)
 			}
 
 			// Truncate the file to zero length to overwrite its content
 			err = files[i].Truncate(0)
 			if err != nil {
-				return nil, fmt.Errorf("cannot truncate file %s: %v", filenames[i], err)
+				return nil, fmt.Errorf("truncate file %s: %v", filenames[i], err)
 			}
 
 			// Move the file pointer to the beginning of the file
 			_, err = files[i].Seek(0, 0)
 			if err != nil {
-				return nil, fmt.Errorf("cannot seek to beginning of file %s: %v", filenames[i], err)
+				return nil, fmt.Errorf("seek file %s: %v", filenames[i], err)
 			}
 
 			bucket = append(bucket, fileKeyValues...)
@@ -227,7 +243,7 @@ func CreateReduceTasks(values []KeyValue, taskNumber int, path string, nReduce i
 		// Sort by key so all values for a key are grouped in the same bucket
 		sort.Sort(ByKey(bucket))
 
-		err = gob.NewEncoder(files[i]).Encode(bucket)
+		err = json.NewEncoder(files[i]).Encode(bucket)
 		if err != nil {
 			return nil, fmt.Errorf("cannot encode bucket %d: %v", i, err)
 		}
