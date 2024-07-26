@@ -63,6 +63,11 @@ func (w *Worker) PerformTask(task TaskArgs) error {
 		if err != nil {
 			return err
 		}
+		w.rpcClient.Call("Coordinator.CompleteTask", &TaskArgs{
+			TaskType:   task.TaskType,
+			TaskNumber: task.TaskNumber,
+			Filenames:  task.Filenames,
+		}, &EmptyArgs{})
 	default:
 		return fmt.Errorf("unknown task type: %s", task.TaskType)
 	}

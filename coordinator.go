@@ -68,6 +68,33 @@ func (c *Coordinator) RequestTask(args EmptyArgs, reply *TaskArgs) error {
 	return nil
 }
 
+func (c *Coordinator) CompleteTask(task TaskArgs, reply *EmptyArgs) (err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	switch task.TaskType {
+	case "map":
+		for i, t := range c.activeMaps {
+			if t.taskNum == task.TaskNumber {
+				c.activeMaps = append(c.activeMaps[:i], c.activeMaps[i+1:]...)
+				return
+			}
+		}
+		c.pendingReduces = append(c.pendingReduces, task.Filenames...)
+	case "reduce":
+		for i, t := range c.activeReduces {
+			if t.taskNum == task.TaskNumber {
+				c.activeReduces = append(c.activeReduces[:i], c.activeReduces[i+1:]...)
+				return
+			}
+		}
+	}
+
+	// TODO: Check if all tasks are done to exit the program
+
+	return fmt.Errorf("unknown task type: %s", task.TaskType)
+}
+
 func (c *Coordinator) NewMapTask(reply *TaskArgs) error {
 	c.mu.Lock()
 	file := c.pendingMaps[len(c.pendingMaps)-1]
