@@ -11,23 +11,12 @@ import (
 	"time"
 )
 
-type task struct {
-	taskType string
-	files    []string
-	start    time.Time
-	taskNum  int
-}
-
 type Coordinator struct {
-	activeMaps  []task
-	pendingMaps []string
-
-	activeReduces  []task
-	pendingReduces []string
+	maps    Tasks
+	reduces Tasks
 
 	reducePath string
 	mu         sync.Mutex
-	taskNum    int
 	nReduce    int
 }
 
@@ -40,26 +29,34 @@ func (c *Coordinator) MonitorPendingTasks() {
 
 	// TODO: Implement a way to check if the coordinator is done to break out of the loop
 	for range ticker.C {
-		c.mu.Lock()
-		for _, task := range c.activeMaps {
+		for _, task := range c.maps.Active() {
 			if time.Since(task.start) > 10*time.Second {
-				c.pendingMaps = append(c.pendingMaps, task.files...)
-				c.activeMaps = c.activeMaps[1:]
+				c.maps.Complete(task.taskNum)
+				c.maps.Add(task.files)
 			}
 		}
-		for _, task := range c.activeReduces {
+		for _, task := range c.reduces.Active() {
 			if time.Since(task.start) > 10*time.Second {
-				c.pendingReduces = append(c.pendingReduces, task.files...)
-				c.pendingMaps = c.pendingMaps[1:]
+				c.reduces.Complete(task.taskNum)
+				c.reduces.Add(task.files)
 			}
 		}
-		c.mu.Unlock()
 	}
 }
 
 func (c *Coordinator) RequestTask(args EmptyArgs, reply *TaskArgs) error {
-	if len(c.pendingMaps) > 0 {
-		return c.NewMapTask(reply)
+	if len(c.maps.pending) > 0 {
+		task, err := c.maps.Request()
+		if err != nil {
+			return err
+		}
+		reply.TaskType = task.taskType
+		reply.Filenames = task.files
+		reply.Number = task.taskNum
+		reply.NReduce = c.nReduce
+		reply.ReducePath = c.reducePath
+
+		return nil
 	}
 	// else if len(c.pendingReduces) > 0 {
 
@@ -74,48 +71,14 @@ func (c *Coordinator) CompleteTask(task TaskArgs, reply *EmptyArgs) (err error) 
 
 	switch task.TaskType {
 	case "map":
-		for i, t := range c.activeMaps {
-			if t.taskNum == task.TaskNumber {
-				c.activeMaps = append(c.activeMaps[:i], c.activeMaps[i+1:]...)
-				return
-			}
-		}
-		c.pendingReduces = append(c.pendingReduces, task.Filenames...)
+		c.maps.Complete(task.Number)
+		c.reduces.Add(task.Filenames)
 	case "reduce":
-		for i, t := range c.activeReduces {
-			if t.taskNum == task.TaskNumber {
-				c.activeReduces = append(c.activeReduces[:i], c.activeReduces[i+1:]...)
-				return
-			}
-		}
+		c.reduces.Complete(task.Number)
 	}
 
 	// TODO: Check if all tasks are done to exit the program
-
 	return fmt.Errorf("unknown task type: %s", task.TaskType)
-}
-
-func (c *Coordinator) NewMapTask(reply *TaskArgs) error {
-	c.mu.Lock()
-	file := c.pendingMaps[len(c.pendingMaps)-1]
-	c.pendingMaps = c.pendingMaps[:len(c.pendingMaps)-1]
-
-	reply.TaskType = "map"
-	reply.Filenames = []string{file}
-	reply.ReducePath = c.reducePath
-	reply.NReduce = c.nReduce
-	reply.TaskNumber = c.taskNum
-
-	c.activeMaps = append(c.activeMaps, task{
-		taskType: "map",
-		files:    []string{file},
-		start:    time.Now(),
-		taskNum:  c.taskNum,
-	})
-	c.taskNum++
-
-	c.mu.Unlock()
-	return nil
 }
 
 // start a thread that listens for RPCs from worker.go
@@ -148,10 +111,16 @@ func (c *Coordinator) Done() bool {
 func NewCoordinator(reduceFolder string, files []string, nReduce int) *Coordinator {
 
 	c := Coordinator{
-		mu:          sync.Mutex{},
-		pendingMaps: files,
-		reducePath:  reduceFolder,
-		nReduce:     nReduce,
+		mu: sync.Mutex{},
+		maps: Tasks{
+			taskType: MapTask,
+			pending:  files,
+		},
+		reduces: Tasks{
+			taskType: ReduceTask,
+		},
+		reducePath: reduceFolder,
+		nReduce:    nReduce,
 	}
 
 	go c.MonitorPendingTasks()

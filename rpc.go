@@ -31,7 +31,7 @@ type TaskArgs struct {
 	Filenames  []string
 	NReduce    int
 	ReducePath string
-	TaskNumber int
+	Number     int
 }
 
 // Add your RPC definitions here.

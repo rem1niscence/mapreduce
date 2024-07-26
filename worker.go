@@ -51,7 +51,7 @@ func NewWorker(mapf MapFunc, reducef ReduceFunc) (*Worker, error) {
 }
 
 func (w *Worker) PerformTask(task TaskArgs) error {
-	fmt.Printf("new task: %v #%d\n", task.Filenames, task.TaskNumber)
+	fmt.Printf("new task: %v #%d\n", task.Filenames, task.Number)
 
 	switch task.TaskType {
 	case "map":
@@ -59,14 +59,14 @@ func (w *Worker) PerformTask(task TaskArgs) error {
 		if err != nil {
 			return err
 		}
-		_, err = CreateReduceTasks(keyValues, task.TaskNumber, task.ReducePath, task.NReduce)
+		_, err = CreateReduceTasks(keyValues, task.Number, task.ReducePath, task.NReduce)
 		if err != nil {
 			return err
 		}
 		w.rpcClient.Call("Coordinator.CompleteTask", &TaskArgs{
-			TaskType:   task.TaskType,
-			TaskNumber: task.TaskNumber,
-			Filenames:  task.Filenames,
+			TaskType:  task.TaskType,
+			Number:    task.Number,
+			Filenames: task.Filenames,
 		}, &EmptyArgs{})
 	default:
 		return fmt.Errorf("unknown task type: %s", task.TaskType)
