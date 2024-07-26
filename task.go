@@ -79,3 +79,9 @@ func (t *Tasks) Active() []Task {
 	defer t.mu.Unlock()
 	return t.active
 }
+
+func (t *Tasks) Empty() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.pending) == 0 && len(t.active) == 0
+}

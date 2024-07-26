@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"time"
 
 	mr "github.com/rem1niscence/mapReduce"
 )
@@ -30,10 +29,7 @@ func main() {
 	}
 	defer os.RemoveAll(reduceFolder)
 
-	m := mr.NewCoordinator(reduceFolder, os.Args[1:], 10)
-	for !m.Done() {
-		time.Sleep(time.Second)
-	}
+	coordinator := mr.NewCoordinator(reduceFolder, os.Args[1:], 10)
 
-	time.Sleep(time.Second)
+	<-coordinator.Done
 }

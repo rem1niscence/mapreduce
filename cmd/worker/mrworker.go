@@ -11,8 +11,10 @@ package main
 //
 
 import (
+	"errors"
 	"fmt"
 	"log"
+	"net/rpc"
 	"os"
 	"plugin"
 	"time"
@@ -64,10 +66,22 @@ func loadPlugin(filename string) (func(string, string) []mr.KeyValue, func(strin
 // RequestJob periodically pings the coordinator for new jobs to perform
 func RequestJob(worker *mr.Worker, stop chan<- struct{}) {
 	ticker := time.NewTicker(2 * time.Second)
-	for range ticker.C {
+	immediateSignal := make(chan struct{}, 1) // Trigger immediately
+
+	for {
+		select {
+		case <-ticker.C:
+		case <-immediateSignal:
+		}
+
 		// TODO: Break out of loop if coordinator is done
 		task, err := worker.RequestTask()
 		if err != nil {
+			if errors.Is(err, rpc.ErrShutdown) {
+				log.Println("coordinator is done, shutting down worker")
+				break
+			}
+
 			log.Println("failed to request task:", err)
 			continue
 		}
@@ -78,6 +92,10 @@ func RequestJob(worker *mr.Worker, stop chan<- struct{}) {
 		if err := worker.PerformTask(task); err != nil {
 			log.Printf("failed to perform task %s: %v \n", task.TaskType, err)
 		}
+
+		// Signal inmediate tick to request new job
+		immediateSignal <- struct{}{}
 	}
+
 	stop <- struct{}{}
 }

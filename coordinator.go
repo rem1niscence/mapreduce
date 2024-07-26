@@ -18,27 +18,28 @@ type Coordinator struct {
 	reducePath string
 	mu         sync.Mutex
 	nReduce    int
-}
-
-func (c *Coordinator) Run() {
-
+	Done       chan struct{}
+	closeOnce  sync.Once
 }
 
 func (c *Coordinator) MonitorPendingTasks() {
 	ticker := time.NewTicker(500 * time.Millisecond)
-
-	// TODO: Implement a way to check if the coordinator is done to break out of the loop
-	for range ticker.C {
-		for _, task := range c.maps.Active() {
-			if time.Since(task.start) > 10*time.Second {
-				c.maps.Complete(task.taskNum)
-				c.maps.Add(task.files)
+	for {
+		select {
+		case <-c.Done:
+			return
+		case <-ticker.C:
+			for _, task := range c.maps.Active() {
+				if time.Since(task.start) > 10*time.Second {
+					c.maps.Complete(task.taskNum)
+					c.maps.Add(task.files)
+				}
 			}
-		}
-		for _, task := range c.reduces.Active() {
-			if time.Since(task.start) > 10*time.Second {
-				c.reduces.Complete(task.taskNum)
-				c.reduces.Add(task.files)
+			for _, task := range c.reduces.Active() {
+				if time.Since(task.start) > 10*time.Second {
+					c.reduces.Complete(task.taskNum)
+					c.reduces.Add(task.files)
+				}
 			}
 		}
 	}
@@ -76,7 +77,7 @@ func (c *Coordinator) RequestTask(args EmptyArgs, reply *TaskArgs) error {
 	return nil
 }
 
-func (c *Coordinator) CompleteTask(task TaskArgs, reply *EmptyArgs) (err error) {
+func (c *Coordinator) CompleteTask(task TaskArgs, reply *EmptyArgs) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -86,10 +87,17 @@ func (c *Coordinator) CompleteTask(task TaskArgs, reply *EmptyArgs) (err error) 
 		c.reduces.Add(task.Filenames)
 	case ReduceTask:
 		c.reduces.Complete(task.Number)
+	default:
+		return fmt.Errorf("unknown task type: %s", task.TaskType)
 	}
 
-	// TODO: Check if all tasks are done to exit the program
-	return fmt.Errorf("unknown task type: %s", task.TaskType)
+	if c.maps.Empty() && c.reduces.Empty() {
+		c.closeOnce.Do(func() {
+			close(c.Done)
+		})
+	}
+
+	return nil
 }
 
 // start a thread that listens for RPCs from worker.go
@@ -104,16 +112,6 @@ func (c *Coordinator) server() {
 		log.Fatal("listen error:", e)
 	}
 	go http.Serve(l, nil)
-}
-
-// main/mrcoordinator.go calls Done() periodically to find out
-// if the entire task has finished.
-func (c *Coordinator) Done() bool {
-	ret := false
-
-	// Your code here.
-
-	return ret
 }
 
 // create a Coordinator.
@@ -132,6 +130,8 @@ func NewCoordinator(reduceFolder string, files []string, nReduce int) *Coordinat
 		},
 		reducePath: reduceFolder,
 		nReduce:    nReduce,
+		closeOnce:  sync.Once{},
+		Done:       make(chan struct{}),
 	}
 
 	go c.MonitorPendingTasks()
