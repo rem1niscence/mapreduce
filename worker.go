@@ -51,18 +51,38 @@ func NewWorker(mapf MapFunc, reducef ReduceFunc) (*Worker, error) {
 }
 
 func (w *Worker) PerformTask(task TaskArgs) error {
-	fmt.Printf("new task: %v #%d\n", task.Filenames, task.Number)
+	fmt.Printf("new task: [%v] %v #%d\n", task.TaskType, task.Filenames, task.Number)
 
 	switch task.TaskType {
-	case "map":
+	case MapTask:
 		keyValues, err := w.Map(task)
 		if err != nil {
 			return err
 		}
-		_, err = CreateReduceTasks(keyValues, task.Number, task.ReducePath, task.NReduce)
+		reduceFiles, err := CreateReduceTasks(keyValues, task.Number, task.ReducePath, task.NReduce)
 		if err != nil {
 			return err
 		}
+		w.rpcClient.Call("Coordinator.CompleteTask", &TaskArgs{
+			TaskType:  task.TaskType,
+			Number:    task.Number,
+			Filenames: reduceFiles,
+		}, &EmptyArgs{})
+	case ReduceTask:
+		keyValues, err := w.Reduce(task)
+		if err != nil {
+			return err
+		}
+		ofile, err := os.Create(fmt.Sprintf("mr-out-%d", task.Number))
+		if err != nil {
+			return err
+		}
+		defer ofile.Close()
+
+		for _, kv := range keyValues {
+			fmt.Fprintf(ofile, "%v %v\n", kv.Key, kv.Value)
+		}
+
 		w.rpcClient.Call("Coordinator.CompleteTask", &TaskArgs{
 			TaskType:  task.TaskType,
 			Number:    task.Number,
@@ -102,6 +122,44 @@ func (w *Worker) Map(task TaskArgs) ([]KeyValue, error) {
 	return w.Mapper(task.Filenames[0], string(content)), nil
 }
 
+func (w *Worker) Reduce(task TaskArgs) ([]KeyValue, error) {
+	reducedValues := make([]KeyValue, 0)
+
+	file, err := os.Open(filepath.Join(task.ReducePath, task.Filenames[0]))
+	if err != nil {
+		return reducedValues, err
+	}
+	defer file.Close()
+
+	intermediateValues := make([]KeyValue, 0)
+	err = gob.NewDecoder(file).Decode(&intermediateValues)
+	if err != nil {
+		return reducedValues, err
+	}
+
+	// call Reduce on each distinct key in keyValues[],
+	i := 0
+	for i < len(intermediateValues) {
+		j := i + 1
+		for j < len(intermediateValues) && intermediateValues[j].Key == intermediateValues[i].Key {
+			j++
+		}
+		values := []string{}
+		for k := i; k < j; k++ {
+			values = append(values, intermediateValues[k].Value)
+		}
+		out := w.Reducer(intermediateValues[i].Key, values)
+		reducedValues = append(reducedValues, KeyValue{
+			Key:   intermediateValues[i].Key,
+			Value: out,
+		})
+
+		i = j
+	}
+
+	return reducedValues, nil
+}
+
 // Stop closes the rpc connection
 // TODO: Signal application to stop
 func (w *Worker) Stop() error {
@@ -117,7 +175,7 @@ func CreateReduceTasks(values []KeyValue, taskNumber int, path string, nReduce i
 	files := make([]*os.File, nReduce)
 	filenames := make([]string, nReduce)
 	for i := 0; i < nReduce; i++ {
-		oname := fmt.Sprintf("mr-out-%d-%d", taskNumber, i)
+		oname := fmt.Sprintf("mp-out-%d-%d", taskNumber, i)
 		ofile, err := os.Create(filepath.Join(path, oname))
 		if err != nil {
 			return nil, fmt.Errorf("cannot create file %s: %v", oname, err)

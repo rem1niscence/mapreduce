@@ -58,9 +58,20 @@ func (c *Coordinator) RequestTask(args EmptyArgs, reply *TaskArgs) error {
 
 		return nil
 	}
-	// else if len(c.pendingReduces) > 0 {
 
-	// }
+	if len(c.reduces.pending) > 0 {
+		task, err := c.reduces.Request()
+		if err != nil {
+			return err
+		}
+		reply.TaskType = task.taskType
+		reply.Filenames = task.files
+		reply.Number = task.taskNum
+		reply.ReducePath = c.reducePath
+
+		return nil
+	}
+
 	fmt.Println("No tasks available")
 	return nil
 }
@@ -70,10 +81,10 @@ func (c *Coordinator) CompleteTask(task TaskArgs, reply *EmptyArgs) (err error) 
 	defer c.mu.Unlock()
 
 	switch task.TaskType {
-	case "map":
+	case MapTask:
 		c.maps.Complete(task.Number)
 		c.reduces.Add(task.Filenames)
-	case "reduce":
+	case ReduceTask:
 		c.reduces.Complete(task.Number)
 	}
 
