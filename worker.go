@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"hash/fnv"
 	"io"
-	"log"
 	"net/rpc"
 	"os"
 	"path/filepath"
@@ -51,27 +50,39 @@ func NewWorker(mapf MapFunc, reducef ReduceFunc) (*Worker, error) {
 	return &w, nil
 }
 
-func (w *Worker) PerformTask() {
-	// Get task from the server
-	task := TaskArgs{}
-	err := w.rpcClient.Call("Coordinator.RequestTask", EmptyArgs{}, &task)
-	if err != nil {
-		log.Println("error getting task from coordinator", err)
-	}
+func (w *Worker) PerformTask(task TaskArgs) error {
+	fmt.Printf("new task: %v #%d\n", task.Filenames, task.TaskNumber)
 
 	switch task.TaskType {
 	case "map":
-		fmt.Printf("new task: %s #%d\n", task.Filenames[0], task.TaskNumber)
-		_, err := w.Map(task)
+		keyValues, err := w.Map(task)
 		if err != nil {
-			log.Println("map task failed:", err)
+			return err
 		}
+		_, err = CreateReduceTasks(keyValues, task.TaskNumber, task.ReducePath, task.NReduce)
+		if err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unknown task type: %s", task.TaskType)
 	}
+
+	return nil
+}
+
+func (w *Worker) RequestTask() (TaskArgs, error) {
+	task := TaskArgs{}
+	err := w.rpcClient.Call("Coordinator.RequestTask", EmptyArgs{}, &task)
+	if err != nil {
+		return TaskArgs{}, err
+	}
+
+	return task, nil
 }
 
 // Map runs the plugin's Map function on the given file and content
 // and sorts the output by key to be placed in separate buckets based on NReduce.
-func (w *Worker) Map(task TaskArgs) ([]string, error) {
+func (w *Worker) Map(task TaskArgs) ([]KeyValue, error) {
 	file, err := os.Open(task.Filenames[0])
 	if err != nil {
 		return nil, err
@@ -82,9 +93,14 @@ func (w *Worker) Map(task TaskArgs) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	keyValues := w.Mapper(task.Filenames[0], string(content))
 
-	return CreateReduceTasks(keyValues, task.TaskNumber, task.ReducePath, task.NReduce)
+	return w.Mapper(task.Filenames[0], string(content)), nil
+}
+
+// Stop closes the rpc connection
+// TODO: Signal application to stop
+func (w *Worker) Stop() error {
+	return w.rpcClient.Close()
 }
 
 // CreateReduceTasks writes the intermediate key-values to the reduce tasks files, sorted by key.
@@ -123,12 +139,6 @@ func CreateReduceTasks(values []KeyValue, taskNumber int, path string, nReduce i
 	}
 
 	return filenames, nil
-}
-
-// Stop closes the rpc connection
-// TODO: Signal application to stop
-func (w *Worker) Stop() error {
-	return w.rpcClient.Close()
 }
 
 // ihash returns a hash of the key

@@ -62,15 +62,22 @@ func loadPlugin(filename string) (func(string, string) []mr.KeyValue, func(strin
 }
 
 // RequestJob periodically pings the coordinator for new jobs to perform
-func RequestJob(worker *mr.Worker, stopCh chan struct{}) {
+func RequestJob(worker *mr.Worker, stop chan<- struct{}) {
 	ticker := time.NewTicker(2 * time.Second)
-
-	fmt.Println("Requesting job from coordinator")
 	for range ticker.C {
+		// TODO: Break out of loop if coordinator is done
+		task, err := worker.RequestTask()
+		if err != nil {
+			log.Println("failed to request task:", err)
+			continue
+		}
+		if task.TaskType == "" {
+			continue
+		}
 
-		// Ping server
-		worker.PerformTask()
+		if err := worker.PerformTask(task); err != nil {
+			log.Printf("failed to perform task %s: %v \n", task.TaskType, err)
+		}
 	}
-
-	stopCh <- struct{}{}
+	stop <- struct{}{}
 }
