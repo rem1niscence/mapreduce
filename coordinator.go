@@ -35,6 +35,28 @@ func (c *Coordinator) Run() {
 
 }
 
+func (c *Coordinator) MonitorPendingTasks() {
+	ticker := time.NewTicker(500 * time.Millisecond)
+
+	// TODO: Implement a way to check if the coordinator is done to break out of the loop
+	for range ticker.C {
+		c.mu.Lock()
+		for _, task := range c.activeMaps {
+			if time.Since(task.start) > 10*time.Second {
+				c.pendingMaps = append(c.pendingMaps, task.files...)
+				c.activeMaps = c.activeMaps[1:]
+			}
+		}
+		for _, task := range c.activeReduces {
+			if time.Since(task.start) > 10*time.Second {
+				c.pendingReduces = append(c.pendingReduces, task.files...)
+				c.pendingMaps = c.pendingMaps[1:]
+			}
+		}
+		c.mu.Unlock()
+	}
+}
+
 func (c *Coordinator) RequestTask(args EmptyArgs, reply *TaskArgs) error {
 	if len(c.pendingMaps) > 0 {
 		return c.NewMapTask(reply)
@@ -105,7 +127,7 @@ func NewCoordinator(reduceFolder string, files []string, nReduce int) *Coordinat
 		nReduce:     nReduce,
 	}
 
-	// Your code here.
+	go c.MonitorPendingTasks()
 
 	c.server()
 	return &c
