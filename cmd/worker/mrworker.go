@@ -66,6 +66,7 @@ func loadPlugin(filename string) (func(string, string) []mr.KeyValue, func(strin
 // RequestJob periodically pings the coordinator for new jobs to perform
 func RequestJob(worker *mr.Worker, stop chan<- struct{}) {
 	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
 	immediateSignal := make(chan struct{}, 1) // Trigger immediately
 
 	for {
@@ -94,7 +95,11 @@ func RequestJob(worker *mr.Worker, stop chan<- struct{}) {
 		}
 
 		// Signal inmediate tick to request new job
-		immediateSignal <- struct{}{}
+		select {
+		case immediateSignal <- struct{}{}:
+		default:
+			// If there is already a signal in the channel, do nothing
+		}
 	}
 
 	stop <- struct{}{}

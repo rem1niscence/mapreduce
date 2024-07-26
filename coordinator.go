@@ -69,7 +69,6 @@ func (c *Coordinator) RequestTask(args EmptyArgs, reply *TaskArgs) error {
 			return nil
 		}
 
-		fmt.Println("reduce pending tasks", c.reduces.Pending())
 		task, err := c.reduces.Request()
 		if err != nil {
 			return err
