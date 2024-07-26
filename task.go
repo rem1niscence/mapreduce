@@ -38,12 +38,12 @@ func (t *Tasks) Add(files []string) {
 }
 
 func (t *Tasks) Request() (Task, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
 	if len(t.pending) == 0 {
 		return Task{}, fmt.Errorf("no tasks available")
 	}
-
-	t.mu.Lock()
-	defer t.mu.Unlock()
 
 	file := t.pending[len(t.pending)-1]
 	t.pending = t.pending[:len(t.pending)-1]
