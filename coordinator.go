@@ -46,7 +46,11 @@ func (c *Coordinator) MonitorPendingTasks() {
 }
 
 func (c *Coordinator) RequestTask(args EmptyArgs, reply *TaskArgs) error {
-	if len(c.maps.pending) > 0 {
+	if !c.maps.Empty() {
+		if len(c.maps.Pending()) == 0 {
+			return nil
+		}
+
 		task, err := c.maps.Request()
 		if err != nil {
 			return err
@@ -60,7 +64,12 @@ func (c *Coordinator) RequestTask(args EmptyArgs, reply *TaskArgs) error {
 		return nil
 	}
 
-	if len(c.reduces.pending) > 0 {
+	if !c.reduces.Empty() {
+		if len(c.reduces.Pending()) == 0 {
+			return nil
+		}
+
+		fmt.Println("reduce pending tasks", c.reduces.Pending())
 		task, err := c.reduces.Request()
 		if err != nil {
 			return err
@@ -73,7 +82,6 @@ func (c *Coordinator) RequestTask(args EmptyArgs, reply *TaskArgs) error {
 		return nil
 	}
 
-	fmt.Println("No tasks available")
 	return nil
 }
 
