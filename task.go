@@ -1,7 +1,6 @@
 package mr
 
 import (
-	"fmt"
 	"slices"
 	"sync"
 	"time"
@@ -12,6 +11,7 @@ const (
 	ReduceTask = "reduce"
 )
 
+// Task is a struct that represents a task that a worker can perform.
 type Task struct {
 	taskType string
 	files    []string
@@ -19,6 +19,7 @@ type Task struct {
 	taskNum  int
 }
 
+// Tasks is a struct that represents a queue of tasks.
 type Tasks struct {
 	pending  []string
 	active   []Task
@@ -27,6 +28,7 @@ type Tasks struct {
 	Num      int
 }
 
+// Add adds a file task to the pending queue.
 func (t *Tasks) Add(files []string) {
 	t.mu.Lock()
 	for _, file := range files {
@@ -37,12 +39,14 @@ func (t *Tasks) Add(files []string) {
 	t.mu.Unlock()
 }
 
-func (t *Tasks) Request() (Task, error) {
+// Request returns a task from the pending queue. Or an empty task if there are
+// none available.
+func (t *Tasks) Request() Task {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	if len(t.pending) == 0 {
-		return Task{}, fmt.Errorf("no tasks available")
+		return Task{}
 	}
 
 	file := t.pending[len(t.pending)-1]
@@ -57,9 +61,10 @@ func (t *Tasks) Request() (Task, error) {
 	t.Num++
 	t.active = append(t.active, task)
 
-	return task, nil
+	return task
 }
 
+// Complete removes an active task from the active queue.
 func (t *Tasks) Complete(taskNum int) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -73,18 +78,21 @@ func (t *Tasks) Complete(taskNum int) bool {
 	return false
 }
 
+// Pending returns the pending tasks.
 func (t *Tasks) Pending() []string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.pending
 }
 
+// Active returns the active tasks.
 func (t *Tasks) Active() []Task {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.active
 }
 
+// Empty returns whether there are no pending or active tasks.
 func (t *Tasks) Empty() bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
