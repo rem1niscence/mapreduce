@@ -11,7 +11,7 @@ import (
 	"strings"
 	"unicode"
 
-	mr "github.com/rem1niscence/mapReduce"
+	"github.com/rem1niscence/mapReduce/mr"
 )
 
 // The map function is called once for each file of input. The first

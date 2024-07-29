@@ -19,7 +19,7 @@ import (
 	"plugin"
 	"time"
 
-	mr "github.com/rem1niscence/mapReduce"
+	"github.com/rem1niscence/mapReduce/mr"
 )
 
 func main() {
