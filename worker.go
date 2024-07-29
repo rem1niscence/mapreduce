@@ -2,7 +2,7 @@ package mr
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/gob"
 	"fmt"
 	"hash/fnv"
 	"io"
@@ -14,7 +14,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// MapFunc is the function signature for the map function
 type MapFunc func(string, string) []KeyValue
+
+// ReduceFunc is the function signature for the reduce function
 type ReduceFunc func(string, []string) string
 
 // Map functions return a slice of KeyValue.
@@ -23,14 +26,14 @@ type KeyValue struct {
 	Value string
 }
 
-// for sorting by key.
+// ByKey is a slice of KeyValue used for sorting by key.
 type ByKey []KeyValue
 
-// for sorting by key.
 func (a ByKey) Len() int           { return len(a) }
 func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
+// Worker is the worker struct that performs the map and reduce tasks
 type Worker struct {
 	Mapper    MapFunc
 	Reducer   ReduceFunc
@@ -52,8 +55,10 @@ func NewWorker(mapf MapFunc, reducef ReduceFunc) (*Worker, error) {
 	return &w, nil
 }
 
+// PerformTask performs the given task based on the task type. Available task
+// types are MapTask and ReduceTask, which are defined in task.go.
 func (w *Worker) PerformTask(task TaskArgs) error {
-	// fmt.Printf("new task: [%v] %v #%d\n", task.TaskType, task.Filenames, task.Number)
+	outputFiles := make([]string, 0)
 
 	switch task.TaskType {
 	case MapTask:
@@ -61,24 +66,24 @@ func (w *Worker) PerformTask(task TaskArgs) error {
 		if err != nil {
 			return err
 		}
-		reduceFiles, err := CreateReduceTasks(keyValues, task.Number, task.ReducePath, task.NReduce)
-		if err != nil {
-			return err
-		}
-		err = w.rpcClient.Call("Coordinator.CompleteTask", &TaskArgs{
-			TaskType:  task.TaskType,
-			Number:    task.Number,
-			Filenames: reduceFiles,
-		}, &EmptyArgs{})
-		if err != nil {
-			return err
+
+		buckets := make([][]KeyValue, task.NReduce)
+		for _, kv := range keyValues {
+			bucket := ihash(kv.Key) % task.NReduce
+			buckets[bucket] = append(buckets[bucket], kv)
 		}
 
+		reduceFiles, err := CreateReduceTasks(buckets, task.Number, task.ReducePath, task.NReduce)
+		if err != nil {
+			return err
+		}
+		outputFiles = reduceFiles
 	case ReduceTask:
 		keyValues, err := w.Reduce(task)
 		if err != nil {
 			return fmt.Errorf("reducer: function: %v", err)
 		}
+
 		ofile, err := os.Create(fmt.Sprintf("mr-out-%d", task.Number))
 		if err != nil {
 			return fmt.Errorf("reducer: create file: %v", err)
@@ -88,30 +93,21 @@ func (w *Worker) PerformTask(task TaskArgs) error {
 		for _, kv := range keyValues {
 			fmt.Fprintf(ofile, "%v %v\n", kv.Key, kv.Value)
 		}
-
-		err = w.rpcClient.Call("Coordinator.CompleteTask", &TaskArgs{
-			TaskType:  task.TaskType,
-			Number:    task.Number,
-			Filenames: task.Filenames,
-		}, &EmptyArgs{})
-		if err != nil {
-			return fmt.Errorf("reducer: signal complete task: %v", err)
-		}
+		outputFiles = task.Filenames
 	default:
 		return fmt.Errorf("reducer: unknown task type: %s", task.TaskType)
 	}
 
-	return nil
+	return w.rpcClient.Call("Coordinator.CompleteTask", &TaskArgs{
+		TaskType:  task.TaskType,
+		Number:    task.Number,
+		Filenames: outputFiles,
+	}, &EmptyArgs{})
 }
 
 func (w *Worker) RequestTask() (TaskArgs, error) {
 	task := TaskArgs{}
-	err := w.rpcClient.Call("Coordinator.RequestTask", EmptyArgs{}, &task)
-	if err != nil {
-		return TaskArgs{}, err
-	}
-
-	return task, nil
+	return task, w.rpcClient.Call("Coordinator.RequestTask", EmptyArgs{}, &task)
 }
 
 // Map runs the plugin's Map function on the given file and content
@@ -131,6 +127,8 @@ func (w *Worker) Map(task TaskArgs) ([]KeyValue, error) {
 	return w.Mapper(task.Filenames[0], string(content)), nil
 }
 
+// Reduce runs the plugin's Reduce function on the intermediate key-values. It
+// expects the intermediate key-values to be sorted by key
 func (w *Worker) Reduce(task TaskArgs) ([]KeyValue, error) {
 	reducedValues := make([]KeyValue, 0)
 
@@ -142,7 +140,7 @@ func (w *Worker) Reduce(task TaskArgs) ([]KeyValue, error) {
 	defer file.Close()
 
 	intermediateValues := make([]KeyValue, 0)
-	err = json.NewDecoder(file).Decode(&intermediateValues)
+	err = gob.NewDecoder(file).Decode(&intermediateValues)
 	if err != nil {
 		return reducedValues, fmt.Errorf("decode file %s: %v", path, err)
 	}
@@ -177,8 +175,7 @@ func (w *Worker) Stop() error {
 }
 
 // CreateReduceTasks writes the intermediate key-values to the reduce tasks files, sorted by key.
-func CreateReduceTasks(values []KeyValue, taskNumber int, path string, nReduce int) ([]string, error) {
-	// Create nReduce files
+func CreateReduceTasks(buckets [][]KeyValue, taskNumber int, path string, nReduce int) ([]string, error) {
 	files := make([]*os.File, nReduce)
 	filenames := make([]string, nReduce)
 	for i := 0; i < nReduce; i++ {
@@ -190,7 +187,8 @@ func CreateReduceTasks(values []KeyValue, taskNumber int, path string, nReduce i
 		}
 		defer ofile.Close()
 
-		// Apply an exclusive lock to the file
+		// Apply an exclusive lock to the file, as multiple workers could be
+		// writing to the same file.
 		err = unix.Flock(int(ofile.Fd()), unix.LOCK_EX)
 		if err != nil {
 			return nil, fmt.Errorf("lock file %s: %v", oname, err)
@@ -202,13 +200,6 @@ func CreateReduceTasks(values []KeyValue, taskNumber int, path string, nReduce i
 		filenames[i] = oname
 	}
 
-	// Separate file into buckets
-	buckets := make([][]KeyValue, nReduce)
-	for _, kv := range values {
-		bucket := ihash(kv.Key) % nReduce
-		buckets[bucket] = append(buckets[bucket], kv)
-	}
-
 	// Write to files
 	for i, bucket := range buckets {
 		i := i
@@ -217,11 +208,11 @@ func CreateReduceTasks(values []KeyValue, taskNumber int, path string, nReduce i
 			return nil, fmt.Errorf("read file %s: %v", filenames[i], err)
 		}
 
-		// Override file content if it exists
+		// Override the file's content if it exists
 		if len(content) > 0 {
 			fileKeyValues := make([]KeyValue, 0)
 
-			if err := json.NewDecoder(bytes.NewReader(content)).Decode(&fileKeyValues); err != nil {
+			if err := gob.NewDecoder(bytes.NewReader(content)).Decode(&fileKeyValues); err != nil {
 				return nil, fmt.Errorf("decode file %s: %v", filenames[i], err)
 			}
 
@@ -241,9 +232,10 @@ func CreateReduceTasks(values []KeyValue, taskNumber int, path string, nReduce i
 		}
 
 		// Sort by key so all values for a key are grouped in the same bucket
+		// and can be reduced without having the keys scattered across the slice.
 		sort.Sort(ByKey(bucket))
 
-		err = json.NewEncoder(files[i]).Encode(bucket)
+		err = gob.NewEncoder(files[i]).Encode(bucket)
 		if err != nil {
 			return nil, fmt.Errorf("cannot encode bucket %d: %v", i, err)
 		}
