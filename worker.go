@@ -41,8 +41,7 @@ type Worker struct {
 }
 
 func NewWorker(mapf MapFunc, reducef ReduceFunc) (*Worker, error) {
-	sockName := coordinatorSock()
-	client, err := rpc.DialHTTP("unix", sockName)
+	client, err := rpc.DialHTTP("tcp", ":9090")
 	if err != nil {
 		return nil, err
 	}
