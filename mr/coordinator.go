@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/rpc"
+	"os"
 	"sync"
 	"time"
 )
@@ -98,11 +99,15 @@ func (c *Coordinator) CompleteTask(task TaskArgs, reply *EmptyArgs) error {
 	return nil
 }
 
-// start a thread that listens for RPCs from worker.go
-func (c *Coordinator) server() {
+// serve starts the RPC server to listen to requests from workers
+func (c *Coordinator) serve() {
+	addres := os.Getenv("ADDRESS")
+	if addres == "" {
+		addres = ":9090"
+	}
 	rpc.Register(c)
 	rpc.HandleHTTP()
-	l, e := net.Listen("tcp", ":9090")
+	l, e := net.Listen("tcp", addres)
 	if e != nil {
 		log.Fatal("listen error:", e)
 	}
@@ -129,7 +134,7 @@ func NewCoordinator(reduceFolder string, files []string, nReduce int) *Coordinat
 	}
 
 	go c.MonitorPendingTasks()
-	go c.server()
+	go c.serve()
 
 	return &c
 }

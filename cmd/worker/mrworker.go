@@ -19,7 +19,7 @@ import (
 	"plugin"
 	"time"
 
-	"github.com/rem1niscence/mapReduce/mr"
+	"github.com/rem1niscence/mapreduce/mr"
 )
 
 func main() {
@@ -47,16 +47,16 @@ func main() {
 func loadPlugin(filename string) (func(string, string) []mr.KeyValue, func(string, []string) string) {
 	p, err := plugin.Open(filename)
 	if err != nil {
-		log.Fatalf("cannot load plugin %v", filename)
+		log.Fatalf("cannot load plugin %v: %v", filename, err)
 	}
 	mapSymbol, err := p.Lookup("Map")
 	if err != nil {
-		log.Fatalf("cannot find Map in %v", filename)
+		log.Fatalf("cannot find Map in %v: %v", filename, err)
 	}
 	mapFunc := mapSymbol.(func(string, string) []mr.KeyValue)
 	reduceSymbol, err := p.Lookup("Reduce")
 	if err != nil {
-		log.Fatalf("cannot find Reduce in %v", filename)
+		log.Fatalf("cannot find Reduce in %v: %v", filename, err)
 	}
 	reduceFunc := reduceSymbol.(func(string, []string) string)
 

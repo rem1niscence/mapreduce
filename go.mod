@@ -1,4 +1,4 @@
-module github.com/rem1niscence/mapReduce
+module github.com/rem1niscence/mapreduce
 
 go 1.22.0
 

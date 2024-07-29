@@ -41,7 +41,12 @@ type Worker struct {
 }
 
 func NewWorker(mapf MapFunc, reducef ReduceFunc) (*Worker, error) {
-	client, err := rpc.DialHTTP("tcp", ":9090")
+	address := os.Getenv("ADDRESS")
+	if address == "" {
+		address = ":9090"
+	}
+
+	client, err := rpc.DialHTTP("tcp", address)
 	if err != nil {
 		return nil, err
 	}
@@ -57,6 +62,8 @@ func NewWorker(mapf MapFunc, reducef ReduceFunc) (*Worker, error) {
 // PerformTask performs the given task based on the task type. Available task
 // types are MapTask and ReduceTask, which are defined in task.go.
 func (w *Worker) PerformTask(task TaskArgs) error {
+	fmt.Printf("New task: [%s] files: %v\n", task.TaskType, task.Filenames)
+
 	outputFiles := make([]string, 0)
 
 	switch task.TaskType {
@@ -83,7 +90,8 @@ func (w *Worker) PerformTask(task TaskArgs) error {
 			return fmt.Errorf("reducer: function: %v", err)
 		}
 
-		ofile, err := os.Create(fmt.Sprintf("mr-out-%d", task.Number))
+		ofile, err := os.Create(filepath.Join(os.Getenv("OUTPUT_FOLDER"),
+			fmt.Sprintf("mr-out-%d", task.Number)))
 		if err != nil {
 			return fmt.Errorf("reducer: create file: %v", err)
 		}

@@ -14,7 +14,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/rem1niscence/mapReduce/mr"
+	"github.com/rem1niscence/mapreduce/mr"
 )
 
 func main() {
@@ -23,13 +23,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	reduceFolder, err := os.MkdirTemp("../testdata/tmp", "mr")
+	rFolder := os.Getenv("REDUCE_FOLDER")
+	if rFolder == "" {
+		rFolder = "../testdata/tmp"
+	}
+
+	reduceFolder, err := os.MkdirTemp(rFolder, "mr")
 	if err != nil {
 		log.Fatal("create temp folder failed:", err)
 	}
 	defer os.RemoveAll(reduceFolder)
 
 	coordinator := mr.NewCoordinator(reduceFolder, os.Args[1:], 10)
+
+	log.Println("Coordinator up and running")
 
 	<-coordinator.Done
 }
