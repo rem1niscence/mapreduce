@@ -6,11 +6,11 @@ import (
 	"net"
 	"net/http"
 	"net/rpc"
-	"os"
 	"sync"
 	"time"
 )
 
+// Coordinator is the coordinator struct that manages the map and reduce tasks
 type Coordinator struct {
 	maps    Tasks
 	reduces Tasks
@@ -22,6 +22,8 @@ type Coordinator struct {
 	closeOnce  sync.Once
 }
 
+// MonitorPendingTasks checks for tasks that have been pending for too long, and
+// re-adds them to the pending queue.
 func (c *Coordinator) MonitorPendingTasks() {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	for {
@@ -45,45 +47,34 @@ func (c *Coordinator) MonitorPendingTasks() {
 	}
 }
 
+// RequestTask is an RPC method that returns a task to a worker. All tasks of a given
+// type must be completed before the coordinator will return a task of the next type.
 func (c *Coordinator) RequestTask(args EmptyArgs, reply *TaskArgs) error {
-	if !c.maps.Empty() {
-		if len(c.maps.Pending()) == 0 {
+	tasks := []*Tasks{&c.maps, &c.reduces}
+	for _, task := range tasks {
+		if task.Empty() {
+			continue
+		}
+		if len(task.Pending()) == 0 {
 			return nil
 		}
 
-		task, err := c.maps.Request()
-		if err != nil {
-			return err
+		task := task.Request()
+		if task.taskType == "" {
+			return nil
 		}
 		reply.TaskType = task.taskType
 		reply.Filenames = task.files
 		reply.Number = task.taskNum
 		reply.NReduce = c.nReduce
 		reply.ReducePath = c.reducePath
-
 		return nil
 	}
-
-	if !c.reduces.Empty() {
-		if len(c.reduces.Pending()) == 0 {
-			return nil
-		}
-
-		task, err := c.reduces.Request()
-		if err != nil {
-			return err
-		}
-		reply.TaskType = task.taskType
-		reply.Filenames = task.files
-		reply.Number = task.taskNum
-		reply.ReducePath = c.reducePath
-
-		return nil
-	}
-
 	return nil
 }
 
+// CompleteTask is an RPC method that marks a task as complete.
+// It shuts down the coordinator when all tasks are complete.
 func (c *Coordinator) CompleteTask(task TaskArgs, reply *EmptyArgs) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -111,18 +102,14 @@ func (c *Coordinator) CompleteTask(task TaskArgs, reply *EmptyArgs) error {
 func (c *Coordinator) server() {
 	rpc.Register(c)
 	rpc.HandleHTTP()
-	//l, e := net.Listen("tcp", ":1234")
-	sockname := coordinatorSock()
-	os.Remove(sockname)
-	l, e := net.Listen("unix", sockname)
+	l, e := net.Listen("tcp", ":9090")
 	if e != nil {
 		log.Fatal("listen error:", e)
 	}
-	go http.Serve(l, nil)
+	http.Serve(l, nil)
 }
 
 // create a Coordinator.
-// main/mrcoordinator.go calls this function.
 // nReduce is the number of reduce tasks to use.
 func NewCoordinator(reduceFolder string, files []string, nReduce int) *Coordinator {
 
@@ -142,7 +129,7 @@ func NewCoordinator(reduceFolder string, files []string, nReduce int) *Coordinat
 	}
 
 	go c.MonitorPendingTasks()
+	go c.server()
 
-	c.server()
 	return &c
 }
