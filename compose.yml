@@ -1,0 +1,38 @@
+services:
+  coordinator:
+    container_name: coordinator
+    build: 
+      context: .
+      dockerfile: Dockerfile.coordinator
+    command: [ "/testdata/pg-being_ernest.txt", 
+               "/testdata/pg-dorian_gray.txt",
+               "/testdata/pg-frankenstein.txt", 
+               "/testdata/pg-grimm.txt",
+               "/testdata/pg-huckleberry_finn.txt",
+               "/testdata/pg-metamorphosis.txt",
+               "/testdata/pg-sherlock_holmes.txt",
+               "/testdata/pg-tom_sawyer.txt",]
+    environment:
+      - ADDRESS=:9090
+      - REDUCE_FOLDER=/testdata/tmp
+    volumes:
+    - ./cmd/testdata:/testdata
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+      # Change this to the map/reduce file name you want to use in /cmd/mapfuncs
+      args:
+        - MAPFUNC=word_count
+    environment:
+      - ADDRESS=coordinator:9090
+      - OUTPUT_FOLDER=/tmp
+    volumes:
+    - ./cmd/testdata/tmp:/tmp
+    - ./cmd/testdata/:/testdata
+    depends_on:
+    - coordinator
+    deploy:
+        mode: replicated
+        replicas: 3

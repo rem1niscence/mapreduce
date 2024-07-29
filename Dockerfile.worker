@@ -1,0 +1,15 @@
+FROM golang:1.22-bookworm 
+
+ARG MAPFUNC
+
+WORKDIR /go/src/github.com/rem1niscence/mapreduce
+
+COPY . .
+
+RUN CGO_ENABLED=1 go build -buildmode=plugin -o plugin.so ./cmd/mapfuncs/${MAPFUNC}.go 
+
+RUN CGO_ENABLED=1 GOOS=linux go build -a -o bin ./cmd/worker/*.go
+
+ENTRYPOINT ["/go/src/github.com/rem1niscence/mapreduce/bin"]
+
+CMD ["plugin.so"]
